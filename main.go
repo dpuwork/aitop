@@ -26,11 +26,9 @@ func main() {
 		return
 	}
 
-	apiKey, keyErr := provider.ResolveOpenCodeGoAPIKey()
-
 	providers := []provider.Provider{
 		provider.NewClaude(),
-		provider.NewOpenCodeGo(apiKey, keyErr),
+		provider.NewOpenCodeGo(),
 		provider.NewCodex(),
 	}
 	intervals := []time.Duration{pollInterval, pollInterval, pollInterval}

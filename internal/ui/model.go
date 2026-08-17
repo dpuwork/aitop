@@ -19,6 +19,11 @@ type pollMsg struct {
 
 type tickMsg struct{ index int }
 
+// clockMsg fires on a short fixed interval purely to force a re-render, so
+// relative "last poll: Ns ago" / "resets in Xm" labels keep advancing
+// between the much longer per-provider poll ticks.
+type clockMsg struct{}
+
 type Model struct {
 	providers     []provider.Provider
 	intervals     []time.Duration
@@ -39,12 +44,19 @@ func New(providers []provider.Provider, intervals []time.Duration) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := make([]tea.Cmd, len(m.providers))
+	cmds := make([]tea.Cmd, len(m.providers)+1)
 	for i := range m.providers {
 		m.polling[i] = true
 		cmds[i] = m.pollCmd(i)
 	}
+	cmds[len(m.providers)] = clockCmd()
 	return tea.Batch(cmds...)
+}
+
+func clockCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return clockMsg{}
+	})
 }
 
 func (m Model) pollCmd(i int) tea.Cmd {
@@ -87,6 +99,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.polling[msg.index] = true
 		return m, m.pollCmd(msg.index)
+
+	case clockMsg:
+		return m, clockCmd()
 	}
 
 	return m, nil

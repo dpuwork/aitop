@@ -36,25 +36,9 @@ func (m Model) View() string {
 	}
 	footer := header + strings.Repeat(" ", gap) + help
 
-	lines := []string{body, ""}
-	if last := lastPollTime(m.snaps); !last.IsZero() {
-		lines = append(lines, dimStyle.Render("last poll: "+formatTime(last, m.relativeDates, "15:04:05")))
-	}
-	lines = append(lines, footer)
+	lines := []string{body, "", footer}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
-}
-
-// lastPollTime returns the most recent UpdatedAt across all snapshots, or
-// the zero time if none have been polled yet.
-func lastPollTime(snaps []provider.Snapshot) time.Time {
-	var latest time.Time
-	for _, s := range snaps {
-		if s.UpdatedAt.After(latest) {
-			latest = s.UpdatedAt
-		}
-	}
-	return latest
 }
 
 // formatTime renders t either as a short relative offset ("in 4d 6h 32m" /

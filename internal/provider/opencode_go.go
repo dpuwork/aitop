@@ -18,18 +18,16 @@ var windowOrder = []string{"rolling", "weekly", "monthly"}
 // OpenCodeGo polls OpenCode Go's server-side quota endpoint, the
 // authoritative source for rolling/weekly/monthly usage.
 type OpenCodeGo struct {
-	APIKey     string
-	ResolveErr error
-	URL        string
-	Client     *http.Client
+	ResolveAPIKey func() (string, error)
+	URL           string
+	Client        *http.Client
 }
 
-func NewOpenCodeGo(apiKey string, resolveErr error) *OpenCodeGo {
+func NewOpenCodeGo() *OpenCodeGo {
 	return &OpenCodeGo{
-		APIKey:     apiKey,
-		ResolveErr: resolveErr,
-		URL:        openCodeGoUsageURL,
-		Client:     &http.Client{Timeout: 10 * time.Second},
+		ResolveAPIKey: ResolveOpenCodeGoAPIKey,
+		URL:           openCodeGoUsageURL,
+		Client:        &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -38,9 +36,14 @@ func (o *OpenCodeGo) Name() string { return "OpenCode Go" }
 func (o *OpenCodeGo) Poll(ctx context.Context) Snapshot {
 	snap := Snapshot{Provider: o.Name(), UpdatedAt: time.Now()}
 
-	if o.ResolveErr != nil {
+	// Re-resolved on every poll rather than cached at construction time,
+	// so a credential that wasn't available yet at startup (e.g. auth.json
+	// written after aitop launched) is picked up on the next refresh
+	// instead of the provider being stuck reporting the original error.
+	apiKey, err := o.ResolveAPIKey()
+	if err != nil {
 		snap.Status = StatusError
-		snap.Err = o.ResolveErr
+		snap.Err = err
 		return snap
 	}
 
@@ -50,7 +53,7 @@ func (o *OpenCodeGo) Poll(ctx context.Context) Snapshot {
 		snap.Err = err
 		return snap
 	}
-	req.Header.Set("Authorization", "Bearer "+o.APIKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := o.Client.Do(req)
