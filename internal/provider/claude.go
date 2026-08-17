@@ -86,19 +86,35 @@ func parseClaudeUsage(snap *Snapshot, text string) {
 	}
 }
 
-// parseClaudeResetTime parses strings like "Aug 17, 11:49am (UTC)". The
-// year is not included, so the current year is assumed and rolled forward
-// a year if that puts the reset implausibly far in the past (e.g. parsing
-// a December reset in early January).
+// claudeResetTZRe splits a trailing "(TZ)" annotation off a reset string,
+// e.g. "Aug 17 at 2:49pm (Asia/Jerusalem)" -> date part + "Asia/Jerusalem".
+// The CLI has been observed to emit both "(UTC)" and full IANA zone names
+// depending on the user's local timezone.
+var claudeResetTZRe = regexp.MustCompile(`^(.*?)\s*\(([^()]+)\)\s*$`)
+
+// parseClaudeResetTime parses strings like "Aug 17, 11:49am (UTC)" or
+// "Aug 17 at 2:49pm (Asia/Jerusalem)" — the CLI varies both the
+// date/time separator ("," vs " at ") and the timezone annotation by
+// locale. The year is not included, so the current year is assumed and
+// rolled forward a year if that puts the reset implausibly far in the
+// past (e.g. parsing a December reset in early January).
 func parseClaudeResetTime(s string) (time.Time, bool) {
 	s = strings.TrimSpace(s)
-	loc := time.UTC
-	if strings.HasSuffix(s, "(UTC)") {
-		s = strings.TrimSpace(strings.TrimSuffix(s, "(UTC)"))
-	}
 
-	now := time.Now().UTC()
-	candidate := fmt.Sprintf("%d %s", now.Year(), s)
+	loc := time.UTC
+	datePart := s
+	if m := claudeResetTZRe.FindStringSubmatch(s); m != nil {
+		datePart = strings.TrimSpace(m[1])
+		if tzName := m[2]; tzName != "UTC" {
+			if l, err := time.LoadLocation(tzName); err == nil {
+				loc = l
+			}
+		}
+	}
+	datePart = strings.Replace(datePart, " at ", ", ", 1)
+
+	now := time.Now().In(loc)
+	candidate := fmt.Sprintf("%d %s", now.Year(), datePart)
 	t, err := time.ParseInLocation("2006 Jan 2, 3:04pm", candidate, loc)
 	if err != nil {
 		return time.Time{}, false
