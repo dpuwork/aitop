@@ -24,11 +24,22 @@ type tickMsg struct{ index int }
 // between the much longer per-provider poll ticks.
 type clockMsg struct{}
 
+// spinnerTickMsg drives the animated "polling" indicator. It reschedules
+// itself only while at least one provider is actively polling, so the
+// dashboard isn't waking up several times a second while idle.
+type spinnerTickMsg struct{}
+
+const spinnerInterval = 120 * time.Millisecond
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 type Model struct {
 	providers     []provider.Provider
 	intervals     []time.Duration
 	snaps         []provider.Snapshot
 	polling       []bool
+	spinning      bool
+	spinnerFrame  int
 	quitting      bool
 	relativeDates bool
 }
@@ -44,12 +55,14 @@ func New(providers []provider.Provider, intervals []time.Duration) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := make([]tea.Cmd, len(m.providers)+1)
+	cmds := make([]tea.Cmd, len(m.providers)+2)
 	for i := range m.providers {
 		m.polling[i] = true
 		cmds[i] = m.pollCmd(i)
 	}
 	cmds[len(m.providers)] = clockCmd()
+	m.spinning = true
+	cmds[len(m.providers)+1] = spinnerCmd()
 	return tea.Batch(cmds...)
 }
 
@@ -57,6 +70,22 @@ func clockCmd() tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg {
 		return clockMsg{}
 	})
+}
+
+func spinnerCmd() tea.Cmd {
+	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg {
+		return spinnerTickMsg{}
+	})
+}
+
+// anyPolling reports whether at least one provider is mid-poll.
+func (m Model) anyPolling() bool {
+	for _, p := range m.polling {
+		if p {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) pollCmd(i int) tea.Cmd {
@@ -85,6 +114,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.polling[i] = true
 				cmds[i] = m.pollCmd(i)
 			}
+			if !m.spinning {
+				m.spinning = true
+				cmds = append(cmds, spinnerCmd())
+			}
 			return m, tea.Batch(cmds...)
 		case "d":
 			m.relativeDates = !m.relativeDates
@@ -98,10 +131,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.polling[msg.index] = true
-		return m, m.pollCmd(msg.index)
+		cmds := []tea.Cmd{m.pollCmd(msg.index)}
+		if !m.spinning {
+			m.spinning = true
+			cmds = append(cmds, spinnerCmd())
+		}
+		return m, tea.Batch(cmds...)
 
 	case clockMsg:
 		return m, clockCmd()
+
+	case spinnerTickMsg:
+		m.spinnerFrame++
+		if !m.anyPolling() {
+			m.spinning = false
+			return m, nil
+		}
+		return m, spinnerCmd()
 	}
 
 	return m, nil

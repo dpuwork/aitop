@@ -22,7 +22,7 @@ func (m Model) View() string {
 
 	panels := make([]string, len(m.providers))
 	for i, p := range m.providers {
-		panels[i] = renderPanel(p.Name(), m.snaps[i], m.polling[i], m.relativeDates)
+		panels[i] = renderPanel(p.Name(), m.snaps[i], m.polling[i], m.relativeDates, m.spinnerFrame)
 	}
 	body := lipgloss.JoinVertical(lipgloss.Left, panels...)
 
@@ -80,27 +80,31 @@ func shortDuration(d time.Duration) string {
 	return strings.Join(parts, " ")
 }
 
-func renderPanel(name string, snap provider.Snapshot, polling bool, relativeDates bool) string {
+func renderPanel(name string, snap provider.Snapshot, polling bool, relativeDates bool, spinnerFrame int) string {
 	var b strings.Builder
 
 	var status string
 	switch {
 	case polling:
-		status = dimStyle.Render("polling…")
-	case snap.Status == provider.StatusOK:
-		status = okStyle.Render("ok")
+		status = dimStyle.Render(spinnerFrames[spinnerFrame%len(spinnerFrames)])
 	case snap.Status == provider.StatusError:
 		status = errStyle.Render("error")
+	case snap.Status == provider.StatusOK:
+		status = "" // no news is good news; skip the redundant "ok" label
 	default:
 		status = dimStyle.Render("waiting for first poll")
 	}
 	title := panelTitleStyle.Render(name)
-	contentWidth := panelWidth - 2 // account for panelStyle's Padding(0, 1)
-	gap := contentWidth - lipgloss.Width(title) - lipgloss.Width(status)
-	if gap < 1 {
-		gap = 1
+	titleLine := title
+	if status != "" {
+		contentWidth := panelWidth - 2 // account for panelStyle's Padding(0, 1)
+		gap := contentWidth - lipgloss.Width(title) - lipgloss.Width(status)
+		if gap < 1 {
+			gap = 1
+		}
+		titleLine = title + strings.Repeat(" ", gap) + status
 	}
-	b.WriteString(title + strings.Repeat(" ", gap) + status + "\n")
+	b.WriteString(titleLine + "\n")
 
 	if snap.Status == provider.StatusError && snap.Err != nil {
 		b.WriteString(errStyle.Render("! "+snap.Err.Error()) + "\n")
