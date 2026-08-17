@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 go build ./...        # build
 go run .               # run the TUI
 go vet ./...           # lint/vet
-go test ./...           # test (no tests currently exist)
+go test ./...           # test
 ```
 
 Go toolchain version is pinned via `mise.toml` (`go = "1.26.6"`); use `mise install` if the pinned version isn't available locally.
