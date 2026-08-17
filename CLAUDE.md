@@ -31,3 +31,65 @@ Two packages, cleanly separated:
 - **`internal/ui`** — a single Bubble Tea `Model` (`model.go`) driving one bordered panel per provider (`view.go` + `styles.go`). Each provider polls and reschedules itself independently (`pollMsg`/`tickMsg` carry a provider index), so one slow or failing provider never blocks the others' display or refresh cadence. Keybinds: `q`/`ctrl+c`/`esc` to quit, `r` to force-refresh all providers immediately.
 
 Adding a new provider means: implement `provider.Provider` in a new file under `internal/provider`, then add it (with its poll interval) to the slice in `main.go`.
+
+## Regenerating the README screenshots
+
+`assets/aitop-dark.svg` / `assets/aitop-light.svg` are rendered with [`termframe`](https://github.com/pamburus/termframe), not `freeze` (charmbracelet) — `freeze -x` does naive raw-byte capture and doesn't interpret cursor movement/alt-screen escape codes, so it garbles Bubble Tea's full-screen redraws into a giant, mangled image. `termframe` runs a real terminal emulator, so it handles the alt screen correctly.
+
+1. Install termframe (global mise tool, already in `~/.config/mise/config.toml` as `github:pamburus/termframe`):
+   ```sh
+   mise use -g github:pamburus/termframe
+   ```
+
+2. Add a temporary `cmd/screenshot/main.go` *inside* the module (it must live under `github.com/dpuwork/aitop/...` to be allowed to import `internal/ui` and `internal/provider`). It builds three fake `provider.Provider`s returning canned `Snapshot`s (representative windows/percentages — do not capture real account data, since that would leak actual usage numbers into a public screenshot) and runs the normal `tea.Program` with no auto-quit — `termframe` owns the timeout:
+   ```go
+   package main
+
+   import (
+   	"context"
+   	"time"
+
+   	tea "github.com/charmbracelet/bubbletea"
+
+   	"github.com/dpuwork/aitop/internal/provider"
+   	"github.com/dpuwork/aitop/internal/ui"
+   )
+
+   type fakeProvider struct {
+   	name string
+   	snap provider.Snapshot
+   }
+
+   func (f fakeProvider) Name() string                               { return f.name }
+   func (f fakeProvider) Poll(ctx context.Context) provider.Snapshot { return f.snap }
+
+   func main() {
+   	// ...construct claude/opencode/codex fakeProviders with canned Snapshots...
+   	providers := []provider.Provider{claude, opencode, codex}
+   	intervals := []time.Duration{time.Hour, time.Hour, time.Hour}
+
+   	m := ui.New(providers, intervals)
+   	p := tea.NewProgram(m, tea.WithAltScreen())
+   	if _, err := p.Run(); err != nil {
+   		panic(err)
+   	}
+   }
+   ```
+
+3. Build it and render both themes:
+   ```sh
+   go build -o /tmp/aitop-demo ./cmd/screenshot
+
+   termframe --theme git-hub-dark-default  --mode dark  --title aitop --window-shadow=false -W auto -H auto --timeout 3 -o assets/aitop-dark.svg  -- /tmp/aitop-demo
+   termframe --theme git-hub-light-default --mode light --title aitop --window-shadow=false -W auto -H auto --timeout 3 -o assets/aitop-light.svg -- /tmp/aitop-demo
+   ```
+   `-W auto -H auto` crops the frame tightly to content instead of leaving blank space. `--timeout 3` is enough for the fake providers (no real polling) to render once.
+
+4. Delete `cmd/screenshot/` afterward — it's a one-off generator, not part of the shipped product.
+
+To preview an SVG locally without a browser (e.g. in a headless sandbox), `resvg` works but its default generic-font mapping expects Windows font names (`Arial`, `Times New Roman`, `Courier New`) and silently drops text if those aren't installed — pass explicit fallbacks:
+```sh
+mise use -g aqua:linebender/resvg@latest
+resvg --sans-serif-family "DejaVu Sans" --monospace-family "DejaVu Sans Mono" assets/aitop-dark.svg preview.png
+```
+(Remove the `resvg` global tool afterward if it was only added for this — it's not a project dependency.)
