@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="/assets/aitop-light.svg">
-  <img alt="aitop screenshot" src="/assets/aitop-dark.svg" width="75%" height="75%">
+  <source media="(prefers-color-scheme: light)" srcset="/assets/aitop-light.png">
+  <img alt="aitop screenshot" src="/assets/aitop-dark.png" width="75%" height="75%">
 </picture>
 
 <br/>

@@ -34,11 +34,12 @@ Adding a new provider means: implement `provider.Provider` in a new file under `
 
 ## Regenerating the README screenshots
 
-`assets/aitop-dark.svg` / `assets/aitop-light.svg` are rendered with [`termframe`](https://github.com/pamburus/termframe), not `freeze` (charmbracelet) — `freeze -x` does naive raw-byte capture and doesn't interpret cursor movement/alt-screen escape codes, so it garbles Bubble Tea's full-screen redraws into a giant, mangled image. `termframe` runs a real terminal emulator, so it handles the alt screen correctly.
+`assets/aitop-dark.png` / `assets/aitop-light.png` start life as SVG, rendered with [`termframe`](https://github.com/pamburus/termframe) — not `freeze` (charmbracelet), since `freeze -x` does naive raw-byte capture and doesn't interpret cursor movement/alt-screen escape codes, garbling Bubble Tea's full-screen redraws into a mangled image. `termframe` runs a real terminal emulator, so it handles the alt screen correctly. The SVG is then rasterized to PNG with `resvg` and discarded — PNG is what's actually committed, because GitHub (and most Markdown renderers) rasterize embedded SVGs on every view, which is noticeably slower than a PNG.
 
-1. Install termframe (global mise tool, already in `~/.config/mise/config.toml` as `github:pamburus/termframe`):
+1. Install termframe and resvg (global mise tools, already in `~/.config/mise/config.toml` as `github:pamburus/termframe` and `aqua:linebender/resvg`):
    ```sh
    mise use -g github:pamburus/termframe
+   mise use -g aqua:linebender/resvg@latest
    ```
 
 2. Add a temporary `cmd/screenshot/main.go` *inside* the module (it must live under `github.com/dpuwork/aitop/...` to be allowed to import `internal/ui` and `internal/provider`). It builds three fake `provider.Provider`s returning canned `Snapshot`s (representative windows/percentages — do not capture real account data, since that would leak actual usage numbers into a public screenshot) and runs the normal `tea.Program` with no auto-quit — `termframe` owns the timeout:
@@ -76,20 +77,19 @@ Adding a new provider means: implement `provider.Provider` in a new file under `
    }
    ```
 
-3. Build it and render both themes:
+3. Build it and render both themes to SVG in a scratch location:
    ```sh
    go build -o /tmp/aitop-demo ./cmd/screenshot
 
-   termframe --theme git-hub-dark-default  --mode dark  --title aitop --window-shadow=false -W auto -H auto --timeout 3 -o assets/aitop-dark.svg  -- /tmp/aitop-demo
-   termframe --theme git-hub-light-default --mode light --title aitop --window-shadow=false -W auto -H auto --timeout 3 -o assets/aitop-light.svg -- /tmp/aitop-demo
+   termframe --theme git-hub-dark-default  --mode dark  --title aitop --window-shadow=false -W auto -H auto --timeout 3 -o /tmp/aitop-dark.svg  -- /tmp/aitop-demo
+   termframe --theme git-hub-light-default --mode light --title aitop --window-shadow=false -W auto -H auto --timeout 3 -o /tmp/aitop-light.svg -- /tmp/aitop-demo
    ```
    `-W auto -H auto` crops the frame tightly to content instead of leaving blank space. `--timeout 3` is enough for the fake providers (no real polling) to render once.
 
-4. Delete `cmd/screenshot/` afterward — it's a one-off generator, not part of the shipped product.
+4. Rasterize to the committed PNGs. `resvg`'s default generic-font mapping expects Windows font names (`Arial`, `Times New Roman`, `Courier New`) and silently drops text if those aren't installed — pass explicit fallbacks:
+   ```sh
+   resvg --sans-serif-family "DejaVu Sans" --monospace-family "DejaVu Sans Mono" /tmp/aitop-dark.svg  assets/aitop-dark.png
+   resvg --sans-serif-family "DejaVu Sans" --monospace-family "DejaVu Sans Mono" /tmp/aitop-light.svg assets/aitop-light.png
+   ```
 
-To preview an SVG locally without a browser (e.g. in a headless sandbox), `resvg` works but its default generic-font mapping expects Windows font names (`Arial`, `Times New Roman`, `Courier New`) and silently drops text if those aren't installed — pass explicit fallbacks:
-```sh
-mise use -g aqua:linebender/resvg@latest
-resvg --sans-serif-family "DejaVu Sans" --monospace-family "DejaVu Sans Mono" assets/aitop-dark.svg preview.png
-```
-(Remove the `resvg` global tool afterward if it was only added for this — it's not a project dependency.)
+5. Delete `cmd/screenshot/` and the scratch SVGs afterward — the generator is a one-off, not part of the shipped product, and only the PNGs are committed.
