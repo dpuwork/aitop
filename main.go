@@ -3,9 +3,11 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,8 +19,13 @@ import (
 // pollInterval is how often every provider is polled.
 const pollInterval = 120 * time.Second
 
+// scanTimeout bounds how long the startup provider scan can take before the
+// TUI launches, so a single hung CLI process can't block startup forever.
+const scanTimeout = 20 * time.Second
+
 func main() {
 	versionFlag := flag.Bool("version", false, "print version and exit")
+	allFlag := flag.Bool("all", false, "show every provider, including ones that fail the startup availability scan")
 	flag.Parse()
 
 	if *versionFlag {
@@ -26,17 +33,69 @@ func main() {
 		return
 	}
 
-	providers := []provider.Provider{
+	candidates := []provider.Provider{
 		provider.NewClaude(),
 		provider.NewOpenCodeGo(),
 		provider.NewCodex(),
 	}
-	intervals := []time.Duration{pollInterval, pollInterval, pollInterval}
 
-	m := ui.New(providers, intervals)
+	var providers []provider.Provider
+	var initial []provider.Snapshot
+	if *allFlag {
+		providers = candidates
+		initial = nil
+	} else {
+		fmt.Println("aitop: checking providers...")
+		providers, initial = scanProviders(candidates)
+		if len(providers) == 0 {
+			fmt.Fprintln(os.Stderr, "aitop: no providers detected — install and log into claude, opencode, or codex (or run with --all to see why)")
+			os.Exit(1)
+		}
+	}
+
+	intervals := make([]time.Duration, len(providers))
+	for i := range intervals {
+		intervals[i] = pollInterval
+	}
+
+	m := ui.New(providers, intervals, initial)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "aitop:", err)
 		os.Exit(1)
 	}
+}
+
+// scanProviders probes every candidate provider once, concurrently, before
+// the TUI starts. Providers that fail with provider.ErrUnavailable (CLI
+// binary missing, or no credentials found) are dropped entirely, so the
+// dashboard only shows panels for tools actually installed and logged into
+// on this machine. Any other failure (network, a logged-in CLI/API
+// returning an error) still keeps its panel, exactly as it would once
+// polled during normal operation — only "not set up" is filtered.
+func scanProviders(candidates []provider.Provider) ([]provider.Provider, []provider.Snapshot) {
+	snaps := make([]provider.Snapshot, len(candidates))
+
+	var wg sync.WaitGroup
+	for i, p := range candidates {
+		wg.Add(1)
+		go func(i int, p provider.Provider) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), scanTimeout)
+			defer cancel()
+			snaps[i] = p.Poll(ctx)
+		}(i, p)
+	}
+	wg.Wait()
+
+	var providers []provider.Provider
+	var kept []provider.Snapshot
+	for i, p := range candidates {
+		if snaps[i].Status == provider.StatusError && provider.IsUnavailable(snaps[i].Err) {
+			continue
+		}
+		providers = append(providers, p)
+		kept = append(kept, snaps[i])
+	}
+	return providers, kept
 }

@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -36,7 +37,11 @@ func (c *Claude) Poll(ctx context.Context) Snapshot {
 	out, err := cmd.Output()
 	if err != nil {
 		snap.Status = StatusError
-		snap.Err = describeExecErr(err)
+		if errors.Is(err, exec.ErrNotFound) {
+			snap.Err = fmt.Errorf("%w: claude CLI not found in PATH", ErrUnavailable)
+		} else {
+			snap.Err = describeExecErr(err)
+		}
 		return snap
 	}
 

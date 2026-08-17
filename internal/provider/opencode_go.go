@@ -43,7 +43,7 @@ func (o *OpenCodeGo) Poll(ctx context.Context) Snapshot {
 	apiKey, err := o.ResolveAPIKey()
 	if err != nil {
 		snap.Status = StatusError
-		snap.Err = err
+		snap.Err = fmt.Errorf("%w: %w", ErrUnavailable, err)
 		return snap
 	}
 

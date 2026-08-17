@@ -6,6 +6,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -17,6 +18,21 @@ const (
 	StatusOK
 	StatusError
 )
+
+// ErrUnavailable marks a poll failure caused by the provider not being set
+// up on this machine — its CLI binary isn't installed, or no credentials
+// could be found — as opposed to a transient failure (network, timeout, a
+// logged-in CLI/API returning an error) that should keep surfacing as a
+// normal error panel once the provider is in use. Wrap it with %w so
+// IsUnavailable can identify these at startup and hide the provider's
+// panel entirely rather than showing a permanent error.
+var ErrUnavailable = errors.New("provider unavailable")
+
+// IsUnavailable reports whether err indicates the provider isn't set up on
+// this machine (see ErrUnavailable).
+func IsUnavailable(err error) bool {
+	return errors.Is(err, ErrUnavailable)
+}
 
 // Window is a single quota window (rolling, weekly, monthly, ...) reported
 // by a provider that exposes percent-used and reset-time data.

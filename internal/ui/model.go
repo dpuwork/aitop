@@ -44,25 +44,40 @@ type Model struct {
 	relativeDates bool
 }
 
-func New(providers []provider.Provider, intervals []time.Duration) Model {
+// New builds the dashboard model. initial holds any snapshots already
+// fetched during the startup provider scan (see main.go); a zero-value
+// Snapshot (Status == StatusUnknown) means the provider hasn't been polled
+// yet and Init will poll it immediately instead of waiting for a scanned
+// result. Pass a nil slice to poll every provider on start, as before.
+func New(providers []provider.Provider, intervals []time.Duration, initial []provider.Snapshot) Model {
+	snaps := make([]provider.Snapshot, len(providers))
+	copy(snaps, initial)
 	return Model{
 		providers:     providers,
 		intervals:     intervals,
-		snaps:         make([]provider.Snapshot, len(providers)),
+		snaps:         snaps,
 		polling:       make([]bool, len(providers)),
 		relativeDates: true,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := make([]tea.Cmd, len(m.providers)+2)
+	cmds := make([]tea.Cmd, 0, len(m.providers)+2)
 	for i := range m.providers {
+		if m.snaps[i].Status != provider.StatusUnknown {
+			// Already polled during the startup scan; just schedule its next
+			// refresh instead of re-polling immediately.
+			cmds = append(cmds, m.scheduleCmd(i))
+			continue
+		}
 		m.polling[i] = true
-		cmds[i] = m.pollCmd(i)
+		cmds = append(cmds, m.pollCmd(i))
 	}
-	cmds[len(m.providers)] = clockCmd()
-	m.spinning = true
-	cmds[len(m.providers)+1] = spinnerCmd()
+	cmds = append(cmds, clockCmd())
+	if m.anyPolling() {
+		m.spinning = true
+		cmds = append(cmds, spinnerCmd())
+	}
 	return tea.Batch(cmds...)
 }
 

@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -73,6 +75,9 @@ func queryCodexRateLimits(ctx context.Context) (json.RawMessage, error) {
 	}
 
 	if err := cmd.Start(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, fmt.Errorf("%w: codex CLI not found in PATH", ErrUnavailable)
+		}
 		return nil, describeExecErr(err)
 	}
 	defer func() {
@@ -105,6 +110,12 @@ func queryCodexRateLimits(ctx context.Context) (json.RawMessage, error) {
 				continue
 			}
 			if msg.Error != nil {
+				// Observed verbatim from a logged-out `codex app-server` responding
+				// to account/rateLimits/read: {"error":{"code":-32600,"message":
+				// "codex account authentication required to read rate limits"}}.
+				if strings.Contains(msg.Error.Message, "authentication required") {
+					return jsonrpcMsg{}, fmt.Errorf("%w: %s", ErrUnavailable, msg.Error.Message)
+				}
 				return jsonrpcMsg{}, fmt.Errorf("codex app-server: %s", msg.Error.Message)
 			}
 			return msg, nil
