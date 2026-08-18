@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,12 @@ const pollInterval = 120 * time.Second
 // scanTimeout bounds how long the startup provider scan can take before the
 // TUI launches, so a single hung CLI process can't block startup forever.
 const scanTimeout = 20 * time.Second
+
+const startupLoaderInterval = 120 * time.Millisecond
+
+var startupLoaderFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+const startupLoaderLabel = "\033[1;38;5;39m[aitop]\033[0m"
 
 func main() {
 	versionFlag := flag.Bool("version", false, "print version and exit")
@@ -45,8 +52,8 @@ func main() {
 		providers = candidates
 		initial = nil
 	} else {
-		fmt.Println("aitop: checking providers...")
-		providers, initial = scanProviders(candidates)
+		fmt.Print("\033[2J\033[H")
+		providers, initial = scanProvidersWithLoader(candidates)
 		if len(providers) == 0 {
 			fmt.Fprintln(os.Stderr, "aitop: no providers detected — install and log into claude, opencode, or codex (or run with --all to see why)")
 			os.Exit(1)
@@ -63,6 +70,36 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "aitop:", err)
 		os.Exit(1)
+	}
+}
+
+func scanProvidersWithLoader(candidates []provider.Provider) ([]provider.Provider, []provider.Snapshot) {
+	result := make(chan struct {
+		providers []provider.Provider
+		initial   []provider.Snapshot
+	})
+	go func() {
+		providers, initial := scanProviders(candidates)
+		result <- struct {
+			providers []provider.Provider
+			initial   []provider.Snapshot
+		}{providers, initial}
+	}()
+
+	loader := 0
+	ticker := time.NewTicker(startupLoaderInterval)
+	defer ticker.Stop()
+	fmt.Printf("%s %s loading...", startupLoaderFrames[loader], startupLoaderLabel)
+	for {
+		select {
+		case result := <-result:
+			// Remove the loader before Bubble Tea takes over the terminal.
+			fmt.Printf("\r%s\r", strings.Repeat(" ", 32))
+			return result.providers, result.initial
+		case <-ticker.C:
+			loader = (loader + 1) % len(startupLoaderFrames)
+			fmt.Printf("\r%s %s loading...", startupLoaderFrames[loader], startupLoaderLabel)
+		}
 	}
 }
 
