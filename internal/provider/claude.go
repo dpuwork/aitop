@@ -65,17 +65,36 @@ func (c *Claude) Poll(ctx context.Context) Snapshot {
 	return snap
 }
 
-var claudeSessionRe = regexp.MustCompile(`Current session:\s*(\d+)%\s*used(?:\s*·\s*resets\s*([^\n]+))?`)
+// claudeWindowRe matches both the legacy session-only output and the
+// current format, which added a "Current week (...)" line alongside it:
+//
+//	Current session: 92% used · resets Aug 22, 4pm (UTC)
+//	Current week (all models): 51% used · resets Aug 26, 11:59am (UTC)
+//
+// The week line carries a parenthesized qualifier ("all models", or a
+// specific model name on plans with a separate per-model weekly cap);
+// older CLI versions never emit a week line at all, so it's optional and
+// each line is matched independently.
+var claudeWindowRe = regexp.MustCompile(`(?m)^(Current session|Current week)(?:\s*\(([^)]+)\))?:\s*(\d+)%\s*used(?:\s*·\s*resets\s*(.+))?$`)
 
-// parseClaudeUsage extracts the current-session percentage/reset time out
-// of the freeform summary text. The format is not a documented contract,
-// so a failed match degrades to showing the raw first line rather than an
+// parseClaudeUsage extracts quota window percentages/reset times out of
+// the freeform summary text. The format is not a documented contract, so
+// a failed match degrades to showing the raw first line rather than an
 // error.
 func parseClaudeUsage(snap *Snapshot, text string) {
-	if m := claudeSessionRe.FindStringSubmatch(text); m != nil {
-		percent, _ := strconv.Atoi(m[1])
-		w := Window{Name: "session", Percent: percent}
-		if reset := strings.TrimSpace(m[2]); reset != "" {
+	for _, m := range claudeWindowRe.FindAllStringSubmatch(text, -1) {
+		label, qualifier := m[1], strings.TrimSpace(m[2])
+
+		name := "week"
+		if label == "Current session" {
+			name = "session"
+		} else if qualifier != "" && qualifier != "all models" {
+			name = "week (" + qualifier + ")"
+		}
+
+		percent, _ := strconv.Atoi(m[3])
+		w := Window{Name: name, Percent: percent}
+		if reset := strings.TrimSpace(m[4]); reset != "" {
 			if t, ok := parseClaudeResetTime(reset); ok {
 				w.ResetsAt = t
 				w.HasReset = true
@@ -96,6 +115,11 @@ func parseClaudeUsage(snap *Snapshot, text string) {
 // The CLI has been observed to emit both "(UTC)" and full IANA zone names
 // depending on the user's local timezone.
 var claudeResetTZRe = regexp.MustCompile(`^(.*?)\s*\(([^()]+)\)\s*$`)
+
+// claudeResetLayouts covers the time formats the CLI has been observed to
+// emit: minutes are dropped when the reset lands exactly on the hour
+// (e.g. "Aug 22, 4pm" rather than "Aug 22, 4:00pm").
+var claudeResetLayouts = []string{"2006 Jan 2, 3:04pm", "2006 Jan 2, 3pm"}
 
 // parseClaudeResetTime parses strings like "Aug 17, 11:49am (UTC)" or
 // "Aug 17 at 2:49pm (Asia/Jerusalem)" — the CLI varies both the
@@ -120,7 +144,15 @@ func parseClaudeResetTime(s string) (time.Time, bool) {
 
 	now := time.Now().In(loc)
 	candidate := fmt.Sprintf("%d %s", now.Year(), datePart)
-	t, err := time.ParseInLocation("2006 Jan 2, 3:04pm", candidate, loc)
+
+	var t time.Time
+	var err error
+	for _, layout := range claudeResetLayouts {
+		t, err = time.ParseInLocation(layout, candidate, loc)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return time.Time{}, false
 	}

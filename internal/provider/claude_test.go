@@ -90,6 +90,53 @@ func TestParseClaudeUsage(t *testing.T) {
 	}
 }
 
+func TestParseClaudeUsageWithWeeklyWindow(t *testing.T) {
+	text := "You are currently using your subscription to power your Claude Code usage\n\n" +
+		"Current session: 92% used · resets Aug 22, 4pm (UTC)\n" +
+		"Current week (all models): 51% used · resets Aug 26, 11:59am (UTC)\n\n" +
+		"What's contributing to your limits usage?"
+
+	snap := Snapshot{}
+	parseClaudeUsage(&snap, text)
+
+	if len(snap.Windows) != 2 {
+		t.Fatalf("windows = %#v, want 2 windows", snap.Windows)
+	}
+
+	session, week := snap.Windows[0], snap.Windows[1]
+	if session.Name != "session" || session.Percent != 92 || !session.HasReset {
+		t.Errorf("session window = %#v, want session at 92%% with reset", session)
+	}
+	if week.Name != "week" || week.Percent != 51 || !week.HasReset {
+		t.Errorf("week window = %#v, want week at 51%% with reset", week)
+	}
+	if week.ResetsAt.Hour() != 11 || week.ResetsAt.Minute() != 59 {
+		t.Errorf("week reset time = %v, want 11:59", week.ResetsAt)
+	}
+	if snap.Summary != "" {
+		t.Errorf("summary = %q, want empty summary when windows are parsed", snap.Summary)
+	}
+}
+
+func TestParseClaudeUsageWithModelSpecificWeeklyWindow(t *testing.T) {
+	text := "Current session: 10% used · resets Aug 22, 4pm (UTC)\n" +
+		"Current week (all models): 20% used · resets Aug 26, 11:59am (UTC)\n" +
+		"Current week (Opus): 30% used · resets Aug 26, 11:59am (UTC)"
+
+	snap := Snapshot{}
+	parseClaudeUsage(&snap, text)
+
+	if len(snap.Windows) != 3 {
+		t.Fatalf("windows = %#v, want 3 windows", snap.Windows)
+	}
+	if snap.Windows[1].Name != "week" {
+		t.Errorf("all-models window name = %q, want %q", snap.Windows[1].Name, "week")
+	}
+	if snap.Windows[2].Name != "week (Opus)" || snap.Windows[2].Percent != 30 {
+		t.Errorf("Opus window = %#v, want %q at 30%%", snap.Windows[2], "week (Opus)")
+	}
+}
+
 func TestParseClaudeUsagePreservesExistingWindows(t *testing.T) {
 	snap := Snapshot{Windows: []Window{{Name: "existing"}}}
 	parseClaudeUsage(&snap, "not a Claude usage response")
@@ -110,6 +157,7 @@ func TestParseClaudeResetTime(t *testing.T) {
 	}{
 		{name: "comma and UTC", text: "Aug 17, 11:49am (UTC)", ok: true},
 		{name: "at and timezone", text: "Aug 17 at 2:49pm (Asia/Jerusalem)", ok: true},
+		{name: "on the hour with no minutes", text: "Aug 22, 4pm (UTC)", ok: true},
 		{name: "invalid date", text: "not a date", ok: false},
 	}
 
